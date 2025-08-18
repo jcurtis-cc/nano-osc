@@ -11,5 +11,5 @@ A small, portable* Open Sound Control implementation with client, server and tra
 
 ### Examples
 
-* [osc-client](./examples/osc-client/] with default `UDPTransport`
-* [osc-server](./examples/osc-server/] with default `UDPTransport` and simple message handler lambda.
+* [osc-client](./examples/osc-client/) with default `UDPTransport`
+* [osc-server](./examples/osc-server/) with default `UDPTransport` and simple message handler lambda.
