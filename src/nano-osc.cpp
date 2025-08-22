@@ -1,6 +1,7 @@
 #include "nano-osc.hpp"
 #include <cerrno>
 #include <cstddef>
+#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <system_error>
@@ -56,10 +57,12 @@ Message Message::decode(const uint8_t* data, size_t size)
     std::string addr;
     std::string tagstr;
     size_t offset = 0;
-    if (!read_osc_string(addr, data, size, offset)) {
+    if (!read_osc_string(addr, data, size, offset))
+    {
         throw std::runtime_error("Could not read OSC message address");
     }
-    if (!read_osc_string(tagstr, data, size, offset)) {
+    if (!read_osc_string(tagstr, data, size, offset))
+    {
         throw std::runtime_error("Could not read OSC message format string");
     }
 
@@ -68,13 +71,15 @@ Message Message::decode(const uint8_t* data, size_t size)
 
     for (char& tag : tagstr)
     {
-        switch(tag) {
+        switch (tag)
+        {
             case 'i':
                 msg.arguments.emplace_back(read_osc_int32(data, offset));
                 break;
             case 'f':
                 msg.arguments.emplace_back(read_osc_float32(data, offset));
                 break;
+            case 'S':
             case 's': {
                 std::string s;
                 read_osc_string(s, data, size, offset);
@@ -87,11 +92,72 @@ Message Message::decode(const uint8_t* data, size_t size)
                 msg.arguments.emplace_back(b);
                 break;
             }
+            case 'h': {
+                OSCInt64 i = read_osc_int64(data, offset);
+                break;
+            }
+            case 't': {
+                OSCTimeTag tt = read_osc_timetag(data, offset);
+                msg.arguments.emplace_back(tt);
+                break;
+            }
+            case 'd': {
+                // double
+                offset += 8;
+                break;
+            }
+            case 'c': {
+                // an ascii character, sent as 32 bit
+                offset += 4;
+                break;
+            }
+            case 'r': {
+                // 32 bit RGBA color
+                offset += 4;
+                break;
+            }
+            case 'm': {
+                // 4 byte MIDI message. Bytes from MSB to LSB are: port id, status byte, data1, data2
+                offset += 4;
+                break;
+            }
             default:
                 break;
         }
     }
     return msg;
+}
+
+Bundle Bundle::decode(const uint8_t* data, size_t size)
+{
+    using namespace detail;
+    if (!is_bundle(data))
+    {
+        throw std::runtime_error("Packet is not a bundle");
+    }
+    size_t offset = 8;
+    OSCTimeTag tt = read_osc_timetag(data, offset);
+    Bundle bundle {};
+    bundle.timetag = tt;
+
+    while (offset < size)
+    {
+        auto len  = read_u32_be(data + offset);
+        offset   += 4;
+        if (is_bundle(data + offset))
+        {
+            auto b = Bundle::decode(data + offset, len);
+            bundle.bundles.emplace_back(b);
+        }
+        else
+        {
+            auto msg = Message::decode(data + offset, len);
+            bundle.messages.emplace_back(msg);
+        }
+        offset += len;
+    }
+
+    return bundle;
 }
 
 bool UDPTransport::setup_client()
@@ -227,12 +293,20 @@ bool OSCServer::process_one()
 
     try
     {
+        using namespace detail;
+        if (is_bundle(buffer.data()))
+        {
+            auto bundle = Bundle::decode(buffer.data(), received);
+            if (bundle_handler) bundle_handler(bundle);
+            return true;
+        }
         auto msg = Message::decode(buffer.data(), received);
         if (msg_handler) msg_handler(msg);
         return true;
     }
     catch (const std::exception& e)
     {
+        std::cerr << "Error processing OSC packet: " << e.what() << "\n";
         return false;
     }
 }

@@ -11,13 +11,16 @@
 
 namespace NanoOsc {
 
-const int BUFFER_MAX_SIZE = 65536;
+const int BUFFER_MAX_SIZE               = 65536;
+constexpr std::array<char, 8> BUNDLE_ID = {'#', 'b', 'u', 'n', 'd', 'l', 'e', 0};
 
-using OSCInt    = int32_t;
-using OSCFloat  = float;
-using OSCString = std::string;
-using OSCBlob   = std::vector<uint8_t>;
-using OSCValue  = std::variant<OSCInt, OSCFloat, OSCString, OSCBlob>;
+using OSCInt     = int32_t;
+using OSCInt64   = int64_t;
+using OSCTimeTag = uint64_t;
+using OSCFloat   = float;
+using OSCString  = std::string;
+using OSCBlob    = std::vector<uint8_t>;
+using OSCValue   = std::variant<OSCInt, OSCInt64, OSCFloat, OSCString, OSCBlob, OSCTimeTag>;
 
 class Message
 {
@@ -59,6 +62,19 @@ public:
 
     std::vector<uint8_t> encode() const;
     static Message decode(const uint8_t* data, size_t size);
+};
+
+class Bundle
+{
+public:
+    std::vector<Message> messages;
+    std::vector<Bundle> bundles;
+    OSCTimeTag timetag {1};
+
+    Bundle() = default;
+
+    std::vector<uint8_t> encode() const;
+    static Bundle decode(const uint8_t* data, size_t size);
 };
 
 class Transport
@@ -145,9 +161,16 @@ public:
     {}
 
     using MessageHandler = std::function<void(const Message&)>;
+    using BundleHandler  = std::function<void(const Bundle&)>;
+
     void set_message_handler(MessageHandler handler)
     {
         msg_handler = handler;
+    }
+
+    void set_bundle_handler(BundleHandler handler)
+    {
+        bundle_handler = handler;
     }
 
     // Non blocking
@@ -159,6 +182,7 @@ private:
     std::unique_ptr<Transport> transport;
     std::vector<uint8_t> buffer;
     MessageHandler msg_handler;
+    BundleHandler bundle_handler;
 };
 
 namespace detail {
@@ -201,10 +225,25 @@ inline uint32_t read_u32_be(const uint8_t* p)
 {
     return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | uint32_t(p[3]);
 }
+inline uint64_t read_u64_be(const uint8_t* p)
+{
+    return (uint64_t(p[0]) << 56) | (uint64_t(p[1]) << 48) | (uint64_t(p[2]) << 40) | (uint64_t(p[3]) << 32) |
+           (uint64_t(p[4]) << 24) | (uint64_t(p[5]) << 16) | (uint64_t(p[6]) << 8) | (uint64_t(p[7]));
+}
+inline bool is_bundle(const uint8_t* p)
+{
+    return std::memcmp(p, BUNDLE_ID.data(), 8) == 0;
+}
 inline int32_t read_osc_int32(const uint8_t* p, size_t& offset)
 {
-    auto i = static_cast<int32_t>(read_u32_be(p + offset));
+    auto i  = static_cast<int32_t>(read_u32_be(p + offset));
     offset += 4;
+    return i;
+}
+inline int64_t read_osc_int64(const uint8_t* p, size_t& offset)
+{
+    auto i  = static_cast<int64_t>(read_u64_be(p + offset));
+    offset += 8;
     return i;
 }
 inline float read_osc_float32(const uint8_t* p, size_t& offset)
@@ -214,6 +253,12 @@ inline float read_osc_float32(const uint8_t* p, size_t& offset)
     std::memcpy(&f, &bits, sizeof(f));
     offset += 4;
     return f;
+}
+inline uint64_t read_osc_timetag(const uint8_t* p, size_t& offset)
+{
+    auto i  = read_u64_be(p + offset);
+    offset += 8;
+    return i;
 }
 inline bool read_osc_string(std::string& out, const uint8_t* data, size_t size, size_t& offset)
 {
@@ -231,8 +276,8 @@ inline bool read_osc_blob(std::vector<uint8_t>& out, const uint8_t* data, size_t
     offset       += 4;
     if (offset + len > size) return false;
     out.assign(data + offset, data + offset + len);
-    offset     += len;
-    offset = (offset + 4) & ~0x3;
+    offset += len;
+    offset  = (offset + 4) & ~0x3;
     return true;
 }
 
