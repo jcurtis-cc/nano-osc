@@ -18,9 +18,10 @@ using OSCInt     = int32_t;
 using OSCInt64   = int64_t;
 using OSCTimeTag = uint64_t;
 using OSCFloat   = float;
+using OSCFloat64 = double;
 using OSCString  = std::string;
 using OSCBlob    = std::vector<uint8_t>;
-using OSCValue   = std::variant<OSCInt, OSCInt64, OSCFloat, OSCString, OSCBlob, OSCTimeTag>;
+using OSCValue   = std::variant<OSCInt, OSCInt64, OSCFloat, OSCFloat64, OSCString, OSCBlob, OSCTimeTag>;
 
 class Message
 {
@@ -73,6 +74,24 @@ public:
 
     Bundle() = default;
 
+    void clear()
+    {
+        messages.clear();
+        bundles.clear();
+        timetag = 1;
+    }
+
+    void add_message(const Message& msg)
+    {
+        messages.emplace_back(msg);
+    }
+
+    void add_bundle(const Bundle& bundle)
+    {
+        bundles.emplace_back(bundle);
+    }
+
+
     std::vector<uint8_t> encode() const;
     static Bundle decode(const uint8_t* data, size_t size);
 };
@@ -97,14 +116,14 @@ class UDPTransport final : public Transport
 {
 public:
     UDPTransport(const std::string& host, uint16_t port)
-        : socket_fd(-1), host(host), port(port), is_server(false), connected(false)
+        : m_socket_fd(-1), m_host(host), m_port(port), m_is_server(false), m_connected(false)
     {
         if (!setup_client())
         {
             throw std::system_error(errno, std::generic_category(), "UDP client setup failed");
         }
     }
-    explicit UDPTransport(uint16_t port) : socket_fd(-1), port(port), is_server(true), connected(false)
+    explicit UDPTransport(uint16_t port) : m_socket_fd(-1), m_port(port), m_is_server(true), m_connected(false)
     {
         if (!setup_server())
         {
@@ -124,7 +143,7 @@ public:
     size_t receive(uint8_t* buffer, size_t buffer_size) override;
     bool is_ready() const override
     {
-        return connected;
+        return m_connected;
     }
     void close() override;
 
@@ -132,32 +151,33 @@ private:
     bool setup_client();
     bool setup_server();
 
-    int socket_fd;
-    std::string host;
-    int port;
+    int m_socket_fd;
+    std::string m_host;
+    int m_port;
 
-    bool is_server;
-    bool connected;
+    bool m_is_server;
+    bool m_connected;
 };
 
 class OSCClient
 {
 public:
-    explicit OSCClient(std::unique_ptr<Transport> transport) : transport(std::move(transport)), buffer(BUFFER_MAX_SIZE)
+    explicit OSCClient(std::unique_ptr<Transport> transport) : m_transport(std::move(transport)), m_buffer(BUFFER_MAX_SIZE)
     {}
 
     bool send_message(const Message& msg);
+    bool send_bundle(const Bundle& bundle);
     bool send_packet(const uint8_t* data, size_t size);
 
 private:
-    std::unique_ptr<Transport> transport;
-    std::vector<uint8_t> buffer;
+    std::unique_ptr<Transport> m_transport;
+    std::vector<uint8_t> m_buffer;
 };
 
 class OSCServer
 {
 public:
-    explicit OSCServer(std::unique_ptr<Transport> transport) : transport(std::move(transport)), buffer(BUFFER_MAX_SIZE)
+    explicit OSCServer(std::unique_ptr<Transport> transport) : m_transport(std::move(transport)), m_buffer(BUFFER_MAX_SIZE)
     {}
 
     using MessageHandler = std::function<void(const Message&)>;
@@ -165,12 +185,12 @@ public:
 
     void set_message_handler(MessageHandler handler)
     {
-        msg_handler = handler;
+        m_msg_handler = handler;
     }
 
     void set_bundle_handler(BundleHandler handler)
     {
-        bundle_handler = handler;
+        m_bundle_handler = handler;
     }
 
     // Non blocking
@@ -179,73 +199,109 @@ public:
     int process_all();
 
 private:
-    std::unique_ptr<Transport> transport;
-    std::vector<uint8_t> buffer;
-    MessageHandler msg_handler;
-    BundleHandler bundle_handler;
+    std::unique_ptr<Transport> m_transport;
+    std::vector<uint8_t> m_buffer;
+    MessageHandler m_msg_handler;
+    BundleHandler m_bundle_handler;
 };
 
 namespace detail {
+
 inline size_t align4(size_t n)
 {
     return (4 - (n & 3)) & 3;
 }
-inline void add_u32_be(std::vector<uint8_t>& out, uint32_t v)
+
+inline void add_osc_u32(std::vector<uint8_t>& out, uint32_t v)
 {
     out.push_back(static_cast<uint8_t>(v >> 24));
     out.push_back(static_cast<uint8_t>(v >> 16));
     out.push_back(static_cast<uint8_t>(v >> 8));
     out.push_back(static_cast<uint8_t>(v));
 }
+
+inline void add_osc_u64(std::vector<uint8_t>& out, uint64_t v)
+{
+    out.push_back(static_cast<uint8_t>(v >> 56));
+    out.push_back(static_cast<uint8_t>(v >> 48));
+    out.push_back(static_cast<uint8_t>(v >> 40));
+    out.push_back(static_cast<uint8_t>(v >> 32));
+    out.push_back(static_cast<uint8_t>(v >> 24));
+    out.push_back(static_cast<uint8_t>(v >> 16));
+    out.push_back(static_cast<uint8_t>(v >> 8));
+    out.push_back(static_cast<uint8_t>(v));
+}
+
 inline void add_osc_int32(std::vector<uint8_t>& out, int32_t v)
 {
-    add_u32_be(out, static_cast<uint32_t>(v));
+    add_osc_u32(out, static_cast<uint32_t>(v));
 }
-inline void add_osc_float(std::vector<uint8_t>& out, float f)
+
+inline void add_osc_int64(std::vector<uint8_t>& out, int64_t v)
+{
+    add_osc_u64(out, static_cast<uint64_t>(v));
+}
+
+inline void add_osc_float32(std::vector<uint8_t>& out, float f)
 {
     uint32_t bits = 0;
     std::memcpy(&bits, &f, sizeof bits);
-    add_u32_be(out, bits);
+    add_osc_u32(out, bits);
 }
-inline void add_osc_string(std::vector<uint8_t>& out, const std::string& s)
+
+inline void add_osc_float64(std::vector<uint8_t>& out, double d)
+{
+    uint64_t bits = 0;
+    std::memcpy(&bits, &d, sizeof bits);
+    add_osc_u64(out, bits);
+}
+
+inline void add_osc_string(std::vector<uint8_t>& out, std::string_view s)
 {
     out.insert(out.end(), s.begin(), s.end());
     out.push_back(0x00);
     size_t pad = align4(s.size() + 1);
-    out.insert(out.end(), pad, uint8_t(0x00));
+    out.insert(out.end(), pad, uint8_t{0x00});
 }
+
 inline void add_osc_blob(std::vector<uint8_t>& out, const uint8_t* data, size_t size)
 {
-    add_u32_be(out, static_cast<uint32_t>(size));
+    add_osc_u32(out, static_cast<uint32_t>(size));
     out.insert(out.end(), data, data + size);
     size_t pad = align4(size);
-    out.insert(out.end(), pad, uint8_t(0x00));
+    out.insert(out.end(), pad, uint8_t{0x00});
 }
+
 inline uint32_t read_u32_be(const uint8_t* p)
 {
     return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | uint32_t(p[3]);
 }
+
 inline uint64_t read_u64_be(const uint8_t* p)
 {
     return (uint64_t(p[0]) << 56) | (uint64_t(p[1]) << 48) | (uint64_t(p[2]) << 40) | (uint64_t(p[3]) << 32) |
            (uint64_t(p[4]) << 24) | (uint64_t(p[5]) << 16) | (uint64_t(p[6]) << 8) | (uint64_t(p[7]));
 }
+
 inline bool is_bundle(const uint8_t* p)
 {
     return std::memcmp(p, BUNDLE_ID.data(), 8) == 0;
 }
+
 inline int32_t read_osc_int32(const uint8_t* p, size_t& offset)
 {
     auto i  = static_cast<int32_t>(read_u32_be(p + offset));
     offset += 4;
     return i;
 }
+
 inline int64_t read_osc_int64(const uint8_t* p, size_t& offset)
 {
     auto i  = static_cast<int64_t>(read_u64_be(p + offset));
     offset += 8;
     return i;
 }
+
 inline float read_osc_float32(const uint8_t* p, size_t& offset)
 {
     uint32_t bits = read_u32_be(p + offset);
@@ -254,12 +310,25 @@ inline float read_osc_float32(const uint8_t* p, size_t& offset)
     offset += 4;
     return f;
 }
+
+inline double read_osc_float64(const uint8_t* p, size_t& offset)
+{
+    uint32_t bits = read_u64_be(p + offset);
+    double d      = 0.0;
+    std::memcpy(&d, &bits, sizeof(d));
+    offset += 8;
+    return d;
+}
+
+
+
 inline uint64_t read_osc_timetag(const uint8_t* p, size_t& offset)
 {
     auto i  = read_u64_be(p + offset);
     offset += 8;
     return i;
 }
+
 inline bool read_osc_string(std::string& out, const uint8_t* data, size_t size, size_t& offset)
 {
     size_t start = offset;
@@ -269,6 +338,7 @@ inline bool read_osc_string(std::string& out, const uint8_t* data, size_t size, 
     offset = (offset + 4) & ~0x3;
     return true;
 }
+
 inline bool read_osc_blob(std::vector<uint8_t>& out, const uint8_t* data, size_t size, size_t& offset)
 {
     if (offset + 4 > size) return false;

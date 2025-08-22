@@ -32,9 +32,17 @@ std::vector<uint8_t> Message::encode() const
                 {
                     add_osc_int32(buffer, value);
                 }
+                else if constexpr (std::is_same_v<T, OSCInt64>)
+                {
+                    add_osc_int64(buffer, value);
+                }
                 else if constexpr (std::is_same_v<T, OSCFloat>)
                 {
-                    add_osc_float(buffer, value);
+                    add_osc_float32(buffer, value);
+                }
+                else if constexpr (std::is_same_v<T, OSCFloat64>)
+                {
+                    add_osc_float64(buffer, value);
                 }
                 else if constexpr (std::is_same_v<T, OSCString>)
                 {
@@ -44,8 +52,11 @@ std::vector<uint8_t> Message::encode() const
                 {
                     add_osc_blob(buffer, value.data(), value.size());
                 }
-            },
-            arg
+                else if constexpr (std::is_same_v<T, OSCTimeTag>)
+                {
+                    add_osc_u64(buffer, value);
+                }
+            }, arg
         );
     }
     return buffer;
@@ -102,8 +113,8 @@ Message Message::decode(const uint8_t* data, size_t size)
                 break;
             }
             case 'd': {
-                // double
-                offset += 8;
+                OSCFloat64 f = read_osc_float64(data, offset);
+                msg.arguments.emplace_back(f);
                 break;
             }
             case 'c': {
@@ -126,6 +137,30 @@ Message Message::decode(const uint8_t* data, size_t size)
         }
     }
     return msg;
+}
+
+std::vector<uint8_t> Bundle::encode() const
+{
+    using namespace detail;
+    std::vector<uint8_t> buffer;
+    buffer.reserve(512);
+    add_osc_string(buffer, std::string_view{BUNDLE_ID.data(), 7});
+
+    for (const auto& msg : messages) {
+        auto m = msg.encode();
+        auto len = m.size();
+        add_osc_u32(buffer, len);
+        buffer.insert(buffer.end(), m.data(), m.data() + len);
+    }
+
+    for (const auto& bundle : bundles) {
+        auto b = bundle.encode();
+        auto len = b.size();
+        add_osc_u32(buffer, len);
+        buffer.insert(buffer.end(), b.data(), b.data() + len);
+    }
+
+    return buffer;
 }
 
 Bundle Bundle::decode(const uint8_t* data, size_t size)
@@ -171,9 +206,9 @@ bool UDPTransport::setup_client()
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port   = htons(port);
+    server_addr.sin_port   = htons(m_port);
 
-    if (inet_pton(AF_INET, host.c_str(), &server_addr.sin_addr) <= 0)
+    if (inet_pton(AF_INET, m_host.c_str(), &server_addr.sin_addr) <= 0)
     {
         ::close(fd);
         return false;
@@ -197,50 +232,50 @@ bool UDPTransport::setup_client()
         return false;
     }
 
-    socket_fd = fd;
-    connected = true;
+    m_socket_fd = fd;
+    m_connected = true;
     return true;
 }
 
 bool UDPTransport::setup_server()
 {
-    socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (socket_fd < 0)
+    m_socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (m_socket_fd < 0)
     {
         return false;
     }
 
     int opt = 1;
-    setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(m_socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family      = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port        = htons(port);
+    server_addr.sin_port        = htons(m_port);
 
-    if (bind(socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0)
+    if (bind(m_socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0)
     {
-        ::close(socket_fd);
-        socket_fd = -1;
+        ::close(m_socket_fd);
+        m_socket_fd = -1;
         return false;
     }
 
-    int flags = fcntl(socket_fd, F_GETFL, 0);
-    fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK);
+    int flags = fcntl(m_socket_fd, F_GETFL, 0);
+    fcntl(m_socket_fd, F_SETFL, flags | O_NONBLOCK);
 
-    connected = true;
+    m_connected = true;
     return true;
 }
 
 bool UDPTransport::send(const uint8_t* data, size_t size)
 {
-    if (!connected || socket_fd < 0)
+    if (!m_connected || m_socket_fd < 0)
     {
         return false;
     }
 
-    ssize_t sent = ::send(socket_fd, data, size, 0);
+    ssize_t sent = ::send(m_socket_fd, data, size, 0);
     if (sent < 0)
     {
         return false;
@@ -250,9 +285,9 @@ bool UDPTransport::send(const uint8_t* data, size_t size)
 
 size_t UDPTransport::receive(uint8_t* buffer, size_t buffer_size)
 {
-    if (!connected || socket_fd < 0) return false;
+    if (!m_connected || m_socket_fd < 0) return false;
 
-    ssize_t received = ::recv(socket_fd, buffer, buffer_size, 0);
+    ssize_t received = ::recv(m_socket_fd, buffer, buffer_size, 0);
     if (received < 0)
     {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -267,11 +302,11 @@ size_t UDPTransport::receive(uint8_t* buffer, size_t buffer_size)
 
 void UDPTransport::close()
 {
-    if (socket_fd >= 0)
+    if (m_socket_fd >= 0)
     {
-        ::close(socket_fd);
-        socket_fd = -1;
-        connected = false;
+        ::close(m_socket_fd);
+        m_socket_fd = -1;
+        m_connected = false;
     }
 }
 
@@ -281,27 +316,33 @@ bool OSCClient::send_message(const Message& msg)
     return send_packet(data.data(), data.size());
 }
 
+bool OSCClient::send_bundle(const Bundle& bundle)
+{
+    auto data = bundle.encode();
+    return send_packet(data.data(), data.size());
+}
+
 bool OSCClient::send_packet(const uint8_t* data, size_t size)
 {
-    return transport->send(data, size);
+    return m_transport->send(data, size);
 }
 
 bool OSCServer::process_one()
 {
-    size_t received = transport->receive(buffer.data(), buffer.size());
+    size_t received = m_transport->receive(m_buffer.data(), m_buffer.size());
     if (received == 0) return false;
 
     try
     {
         using namespace detail;
-        if (is_bundle(buffer.data()))
+        if (is_bundle(m_buffer.data()))
         {
-            auto bundle = Bundle::decode(buffer.data(), received);
-            if (bundle_handler) bundle_handler(bundle);
+            auto bundle = Bundle::decode(m_buffer.data(), received);
+            if (m_bundle_handler) m_bundle_handler(bundle);
             return true;
         }
-        auto msg = Message::decode(buffer.data(), received);
-        if (msg_handler) msg_handler(msg);
+        auto msg = Message::decode(m_buffer.data(), received);
+        if (m_msg_handler) m_msg_handler(msg);
         return true;
     }
     catch (const std::exception& e)
