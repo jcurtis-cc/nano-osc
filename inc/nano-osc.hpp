@@ -1,17 +1,20 @@
 #ifndef NANO_OSC_HPP
 #define NANO_OSC_HPP
 
+#include <array>
+#include <cstdint>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <stdexcept>
 #include <string>
-#include <cstdint>
 #include <system_error>
+#include <variant>
 #include <vector>
 
 namespace NanoOsc {
 
-const int BUFFER_MAX_SIZE               = 65536;
+constexpr size_t BUFFER_MAX_SIZE        = 65536;
 constexpr std::array<char, 8> BUNDLE_ID = {'#', 'b', 'u', 'n', 'd', 'l', 'e', 0};
 
 using OSCInt     = int32_t;
@@ -91,7 +94,6 @@ public:
         bundles.emplace_back(bundle);
     }
 
-
     std::vector<uint8_t> encode() const;
     static Bundle decode(const uint8_t* data, size_t size);
 };
@@ -162,7 +164,8 @@ private:
 class OSCClient
 {
 public:
-    explicit OSCClient(std::unique_ptr<Transport> transport) : m_transport(std::move(transport)), m_buffer(BUFFER_MAX_SIZE)
+    explicit OSCClient(std::unique_ptr<Transport> transport)
+        : m_transport(std::move(transport)), m_buffer(BUFFER_MAX_SIZE)
     {}
 
     bool send_message(const Message& msg);
@@ -177,7 +180,8 @@ private:
 class OSCServer
 {
 public:
-    explicit OSCServer(std::unique_ptr<Transport> transport) : m_transport(std::move(transport)), m_buffer(BUFFER_MAX_SIZE)
+    explicit OSCServer(std::unique_ptr<Transport> transport)
+        : m_transport(std::move(transport)), m_buffer(BUFFER_MAX_SIZE)
     {}
 
     using MessageHandler = std::function<void(const Message&)>;
@@ -185,18 +189,18 @@ public:
 
     void set_message_handler(MessageHandler handler)
     {
-        m_msg_handler = handler;
+        m_msg_handler = std::move(handler);
     }
 
     void set_bundle_handler(BundleHandler handler)
     {
-        m_bundle_handler = handler;
+        m_bundle_handler = std::move(handler);
     }
 
-    // Non blocking
+    // Returns true if a packet was received and dispatched, false otherwise. Non-blocking.
     bool process_one();
-    // Blocking
-    int process_all();
+    // Drains pending packets up to `max` (or all when max < 0). Returns count dispatched.
+    int process_all(int max = -1);
 
 private:
     std::unique_ptr<Transport> m_transport;
@@ -261,7 +265,7 @@ inline void add_osc_string(std::vector<uint8_t>& out, std::string_view s)
     out.insert(out.end(), s.begin(), s.end());
     out.push_back(0x00);
     size_t pad = align4(s.size() + 1);
-    out.insert(out.end(), pad, uint8_t{0x00});
+    out.insert(out.end(), pad, uint8_t {0x00});
 }
 
 inline void add_osc_blob(std::vector<uint8_t>& out, const uint8_t* data, size_t size)
@@ -269,7 +273,7 @@ inline void add_osc_blob(std::vector<uint8_t>& out, const uint8_t* data, size_t 
     add_osc_u32(out, static_cast<uint32_t>(size));
     out.insert(out.end(), data, data + size);
     size_t pad = align4(size);
-    out.insert(out.end(), pad, uint8_t{0x00});
+    out.insert(out.end(), pad, uint8_t {0x00});
 }
 
 inline uint32_t read_u32_be(const uint8_t* p)
@@ -283,71 +287,80 @@ inline uint64_t read_u64_be(const uint8_t* p)
            (uint64_t(p[4]) << 24) | (uint64_t(p[5]) << 16) | (uint64_t(p[6]) << 8) | (uint64_t(p[7]));
 }
 
-inline bool is_bundle(const uint8_t* p)
+inline bool ensure(size_t have, size_t offset, size_t need)
 {
-    return std::memcmp(p, BUNDLE_ID.data(), 8) == 0;
+    return offset <= have && have - offset >= need;
 }
 
-inline int32_t read_osc_int32(const uint8_t* p, size_t& offset)
+inline bool is_bundle(const uint8_t* p, size_t size)
 {
-    auto i  = static_cast<int32_t>(read_u32_be(p + offset));
+    return size >= 8 && std::memcmp(p, BUNDLE_ID.data(), 8) == 0;
+}
+
+inline bool read_osc_int32(int32_t& out, const uint8_t* data, size_t size, size_t& offset)
+{
+    if (!ensure(size, offset, 4)) return false;
+    out     = static_cast<int32_t>(read_u32_be(data + offset));
     offset += 4;
-    return i;
+    return true;
 }
 
-inline int64_t read_osc_int64(const uint8_t* p, size_t& offset)
+inline bool read_osc_int64(int64_t& out, const uint8_t* data, size_t size, size_t& offset)
 {
-    auto i  = static_cast<int64_t>(read_u64_be(p + offset));
+    if (!ensure(size, offset, 8)) return false;
+    out     = static_cast<int64_t>(read_u64_be(data + offset));
     offset += 8;
-    return i;
+    return true;
 }
 
-inline float read_osc_float32(const uint8_t* p, size_t& offset)
+inline bool read_osc_float32(float& out, const uint8_t* data, size_t size, size_t& offset)
 {
-    uint32_t bits = read_u32_be(p + offset);
-    float f       = 0.0f;
-    std::memcpy(&f, &bits, sizeof(f));
+    if (!ensure(size, offset, 4)) return false;
+    uint32_t bits = read_u32_be(data + offset);
+    std::memcpy(&out, &bits, sizeof(out));
     offset += 4;
-    return f;
+    return true;
 }
 
-inline double read_osc_float64(const uint8_t* p, size_t& offset)
+inline bool read_osc_float64(double& out, const uint8_t* data, size_t size, size_t& offset)
 {
-    uint32_t bits = read_u64_be(p + offset);
-    double d      = 0.0;
-    std::memcpy(&d, &bits, sizeof(d));
+    if (!ensure(size, offset, 8)) return false;
+    uint64_t bits = read_u64_be(data + offset);
+    std::memcpy(&out, &bits, sizeof(out));
     offset += 8;
-    return d;
+    return true;
 }
 
-
-
-inline uint64_t read_osc_timetag(const uint8_t* p, size_t& offset)
+inline bool read_osc_timetag(uint64_t& out, const uint8_t* data, size_t size, size_t& offset)
 {
-    auto i  = read_u64_be(p + offset);
+    if (!ensure(size, offset, 8)) return false;
+    out     = read_u64_be(data + offset);
     offset += 8;
-    return i;
+    return true;
 }
 
 inline bool read_osc_string(std::string& out, const uint8_t* data, size_t size, size_t& offset)
 {
     size_t start = offset;
     while (offset < size && data[offset] != 0x00) ++offset;
-    if (offset >= size) throw std::runtime_error("OSC String is not terminated");
+    if (offset >= size) return false;
     out.assign(reinterpret_cast<const char*>(data + start), offset - start);
-    offset = (offset + 4) & ~0x3;
+    offset = (offset + 4) & ~size_t {0x3};
+    if (offset > size) return false;
     return true;
 }
 
 inline bool read_osc_blob(std::vector<uint8_t>& out, const uint8_t* data, size_t size, size_t& offset)
 {
-    if (offset + 4 > size) return false;
+    if (!ensure(size, offset, 4)) return false;
     uint32_t len  = read_u32_be(data + offset);
     offset       += 4;
-    if (offset + len > size) return false;
+    if (!ensure(size, offset, len)) return false;
     out.assign(data + offset, data + offset + len);
     offset += len;
-    offset  = (offset + 4) & ~0x3;
+    // round up to next 4-byte boundary (0-3 pad bytes); stays put if already aligned
+    offset  = (offset + 3) & ~size_t {0x3};
+    if (offset > size) return false;
     return true;
 }
 

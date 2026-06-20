@@ -56,85 +56,108 @@ std::vector<uint8_t> Message::encode() const
                 {
                     add_osc_u64(buffer, value);
                 }
-            }, arg
+            },
+            arg
         );
     }
     return buffer;
 }
 
-Message Message::decode(const uint8_t* data, size_t size)
+namespace {
+
+bool try_decode_message(Message& out, const uint8_t* data, size_t size) noexcept
 {
     using namespace detail;
     std::string addr;
     std::string tagstr;
     size_t offset = 0;
-    if (!read_osc_string(addr, data, size, offset))
-    {
-        throw std::runtime_error("Could not read OSC message address");
-    }
-    if (!read_osc_string(tagstr, data, size, offset))
-    {
-        throw std::runtime_error("Could not read OSC message format string");
-    }
+    if (!read_osc_string(addr, data, size, offset)) return false;
+    if (!read_osc_string(tagstr, data, size, offset)) return false;
 
-    Message msg(addr);
-    msg.tags = tagstr;
+    out.address = std::move(addr);
+    out.tags    = std::move(tagstr);
+    out.arguments.clear();
 
-    for (char& tag : tagstr)
+    for (size_t i = 1; i < out.tags.size(); ++i)
     {
-        switch (tag)
+        switch (out.tags[i])
         {
-            case 'i':
-                msg.arguments.emplace_back(read_osc_int32(data, offset));
+            case 'i': {
+                int32_t v;
+                if (!read_osc_int32(v, data, size, offset)) return false;
+                out.arguments.emplace_back(v);
                 break;
-            case 'f':
-                msg.arguments.emplace_back(read_osc_float32(data, offset));
+            }
+            case 'f': {
+                float v;
+                if (!read_osc_float32(v, data, size, offset)) return false;
+                out.arguments.emplace_back(v);
                 break;
+            }
             case 'S':
             case 's': {
                 std::string s;
-                read_osc_string(s, data, size, offset);
-                msg.arguments.emplace_back(s);
+                if (!read_osc_string(s, data, size, offset)) return false;
+                out.arguments.emplace_back(std::move(s));
                 break;
             }
             case 'b': {
                 std::vector<uint8_t> b;
-                read_osc_blob(b, data, size, offset);
-                msg.arguments.emplace_back(b);
+                if (!read_osc_blob(b, data, size, offset)) return false;
+                out.arguments.emplace_back(std::move(b));
                 break;
             }
             case 'h': {
-                OSCInt64 i = read_osc_int64(data, offset);
+                int64_t v;
+                if (!read_osc_int64(v, data, size, offset)) return false;
+                out.arguments.emplace_back(v);
                 break;
             }
             case 't': {
-                OSCTimeTag tt = read_osc_timetag(data, offset);
-                msg.arguments.emplace_back(tt);
+                uint64_t v;
+                if (!read_osc_timetag(v, data, size, offset)) return false;
+                out.arguments.emplace_back(OSCTimeTag {v});
                 break;
             }
             case 'd': {
-                OSCFloat64 f = read_osc_float64(data, offset);
-                msg.arguments.emplace_back(f);
+                double v;
+                if (!read_osc_float64(v, data, size, offset)) return false;
+                out.arguments.emplace_back(v);
                 break;
             }
             case 'c': {
                 // an ascii character, sent as 32 bit
+                if (!ensure(size, offset, 4)) return false;
                 offset += 4;
                 break;
             }
             case 'r': {
                 // 32 bit RGBA color
+                if (!ensure(size, offset, 4)) return false;
                 offset += 4;
                 break;
             }
             case 'm': {
                 // 4 byte MIDI message. Bytes from MSB to LSB are: port id, status byte, data1, data2
+                if (!ensure(size, offset, 4)) return false;
                 offset += 4;
                 break;
             }
             default:
                 break;
         }
+    }
+    return true;
+}
+
+}  // namespace
+
+Message Message::decode(const uint8_t* data, size_t size)
+{
+    Message msg("");
+    if (!try_decode_message(msg, data, size))
+    {
+        throw std::runtime_error("OSC message decode failed");
     }
     return msg;
 }
@@ -144,17 +167,20 @@ std::vector<uint8_t> Bundle::encode() const
     using namespace detail;
     std::vector<uint8_t> buffer;
     buffer.reserve(512);
-    add_osc_string(buffer, std::string_view{BUNDLE_ID.data(), 7});
+    add_osc_string(buffer, std::string_view {BUNDLE_ID.data(), 7});
+    add_osc_u64(buffer, timetag);
 
-    for (const auto& msg : messages) {
-        auto m = msg.encode();
+    for (const auto& msg : messages)
+    {
+        auto m   = msg.encode();
         auto len = m.size();
         add_osc_u32(buffer, len);
         buffer.insert(buffer.end(), m.data(), m.data() + len);
     }
 
-    for (const auto& bundle : bundles) {
-        auto b = bundle.encode();
+    for (const auto& bundle : bundles)
+    {
+        auto b   = bundle.encode();
         auto len = b.size();
         add_osc_u32(buffer, len);
         buffer.insert(buffer.end(), b.data(), b.data() + len);
@@ -163,36 +189,55 @@ std::vector<uint8_t> Bundle::encode() const
     return buffer;
 }
 
-Bundle Bundle::decode(const uint8_t* data, size_t size)
+namespace {
+
+bool try_decode_bundle(Bundle& out, const uint8_t* data, size_t size) noexcept
 {
     using namespace detail;
-    if (!is_bundle(data))
-    {
-        throw std::runtime_error("Packet is not a bundle");
-    }
+    if (!is_bundle(data, size)) return false;
     size_t offset = 8;
-    OSCTimeTag tt = read_osc_timetag(data, offset);
-    Bundle bundle {};
-    bundle.timetag = tt;
+    uint64_t tt;
+    if (!read_osc_timetag(tt, data, size, offset)) return false;
+
+    out.timetag = OSCTimeTag {tt};
+    out.messages.clear();
+    out.bundles.clear();
 
     while (offset < size)
     {
-        auto len  = read_u32_be(data + offset);
-        offset   += 4;
-        if (is_bundle(data + offset))
+        if (!ensure(size, offset, 4)) return false;
+        uint32_t len  = read_u32_be(data + offset);
+        offset       += 4;
+        if (!ensure(size, offset, len)) return false;
+
+        if (is_bundle(data + offset, len))
         {
-            auto b = Bundle::decode(data + offset, len);
-            bundle.bundles.emplace_back(b);
+            Bundle child;
+            if (!try_decode_bundle(child, data + offset, len)) return false;
+            out.bundles.emplace_back(std::move(child));
         }
         else
         {
-            auto msg = Message::decode(data + offset, len);
-            bundle.messages.emplace_back(msg);
+            Message child("");
+            if (!try_decode_message(child, data + offset, len)) return false;
+            out.messages.emplace_back(std::move(child));
         }
         offset += len;
     }
 
-    return bundle;
+    return true;
+}
+
+}  // namespace
+
+Bundle Bundle::decode(const uint8_t* data, size_t size)
+{
+    Bundle b;
+    if (!try_decode_bundle(b, data, size))
+    {
+        throw std::runtime_error("OSC bundle decode failed");
+    }
+    return b;
 }
 
 bool UDPTransport::setup_client()
@@ -335,7 +380,7 @@ bool OSCServer::process_one()
     try
     {
         using namespace detail;
-        if (is_bundle(m_buffer.data()))
+        if (is_bundle(m_buffer.data(), received))
         {
             auto bundle = Bundle::decode(m_buffer.data(), received);
             if (m_bundle_handler) m_bundle_handler(bundle);
@@ -352,10 +397,10 @@ bool OSCServer::process_one()
     }
 }
 
-int OSCServer::process_all()
+int OSCServer::process_all(int max)
 {
     int count = 0;
-    while (process_one())
+    while ((max < 0 || count < max) && process_one())
     {
         count++;
     }

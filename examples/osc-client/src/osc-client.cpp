@@ -31,7 +31,6 @@ int main(int argc, char* argv[])
         sent = client.send_bundle(bundle);
         std::cout << " bundle  sent: " << sent << "\n";
 
-
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
