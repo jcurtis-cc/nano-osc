@@ -1,0 +1,19 @@
+add_library(doctest INTERFACE)
+target_include_directories(doctest INTERFACE
+	${CMAKE_CURRENT_SOURCE_DIR}/third_party/doctest
+)
+
+add_executable(nano-osc-tests
+	test_main.cpp
+	test_roundtrip.cpp
+	test_malformed.cpp
+	test_server.cpp
+)
+
+target_link_libraries(nano-osc-tests
+	PRIVATE
+		nanoosc::nanoosc
+		doctest
+)
+
+add_test(NAME unit COMMAND nano-osc-tests)

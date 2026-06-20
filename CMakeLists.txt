@@ -26,3 +26,9 @@ if(BUILD_EXAMPLES)
 	add_subdirectory(examples)
 endif()
 
+option(BUILD_TESTING "Build unit tests" ON)
+if(BUILD_TESTING)
+	enable_testing()
+	add_subdirectory(tests)
+endif()
+
