@@ -19,6 +19,8 @@ The library is split into a small OSC packet core and optional batteries:
 * `nanoosc::runtime` / `#include <nanoosc/runtime.hpp>`
   * Transport abstraction plus `OSCClient` and `OSCServer`.
   * Transport-agnostic and single threaded.
+* `nanoosc::runtime_stats` / `#include <nanoosc/runtime_stats.hpp>` (optional, default off)
+  * Stats-enabled runtime sibling with packet rates, top-level message/bundle rates, runtime drops, OS drops, and compact text snapshots.
 * `nanoosc::udp` / `#include <nanoosc/udp_transport.hpp>`
   * POSIX UDP transport battery.
 * `nanoosc::nanoosc` / `#include <nano-osc.hpp>`
@@ -59,6 +61,7 @@ OpenSoundControl [Spec 1.0](https://opensoundcontrol.stanford.edu/spec-1_0.html)
 
 * [osc-client](./examples/osc-client/) with default `UDPTransport`
 * [osc-server](./examples/osc-server/) with default `UDPTransport` and simple message handler lambda.
+* [osc-stats-server](./examples/osc-stats-server/) with `OSCStatsServer`, enabled by `-DNANOOSC_BUILD_RUNTIME_STATS=ON`.
 
 ### Building & Testing
 
@@ -70,7 +73,20 @@ ctest --test-dir build --output-on-failure
 
 Options:
 * `-DNANOOSC_BUILD_RUNTIME=OFF` builds only the OSC packet core
+* `-DNANOOSC_BUILD_RUNTIME_STATS=ON` builds the optional runtime stats battery
 * `-DNANOOSC_BUILD_UDP=OFF` skips the POSIX UDP transport battery
-* `-DBUILD_EXAMPLES=OFF` skips the client/server examples
+* `-DBUILD_EXAMPLES=OFF` skips the examples
 * `-DBUILD_TESTING=OFF` skips the unit tests
 
+Runtime stats are opt-in and keep the default `OSCServer` and `UDPTransport` paths unchanged. See
+[osc-stats-server](./examples/osc-stats-server/) for the intended `OSCStatsServer` usage. Its snapshot
+output is shaped like:
+
+```text
+rx packets/sec      4500
+top messages/sec    18000
+bundles/sec         12.0
+
+os drops            120 (per_socket)
+runtime drops       0
+```
