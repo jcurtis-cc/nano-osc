@@ -3,31 +3,15 @@
 
 #include "nanoosc/runtime.hpp"
 
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace NanoOsc {
-
-enum class RuntimeDropReason : uint8_t
-{
-    DecodeFailed,
-    ValidationFailed,
-    AssignmentFailed,
-};
-
-struct RuntimeDropCounts
-{
-    uint64_t decode_failed {0};
-    uint64_t validation_failed {0};
-    uint64_t assignment_failed {0};
-
-    uint64_t total() const noexcept { return decode_failed + validation_failed + assignment_failed; }
-};
 
 enum class OsDropScope : uint8_t
 {
@@ -57,6 +41,22 @@ public:
     virtual OsDropDelta sample() noexcept = 0;
 };
 
+enum class RuntimeDropReason : uint8_t
+{
+    DecodeFailed,
+    ValidationFailed,
+    AssignmentFailed,
+};
+
+struct RuntimeDropCounts
+{
+    uint64_t decode_failed {0};
+    uint64_t validation_failed {0};
+    uint64_t assignment_failed {0};
+
+    uint64_t total() const noexcept { return decode_failed + validation_failed + assignment_failed; }
+};
+
 struct RuntimeStatsSnapshot
 {
     uint64_t rx_packets_total {0};
@@ -65,9 +65,15 @@ struct RuntimeStatsSnapshot
     uint64_t top_level_bundles_total {0};
 
     RuntimeDropCounts runtime_drops;
+    // Historical cumulative count from the configured OS-drop provider. This
+    // is not proof that provider sampling is currently available.
     uint64_t          os_drops_total {0};
     OsDropScope       os_drop_scope {OsDropScope::Unavailable};
+};
 
+struct RuntimeStatsRateSample
+{
+    double elapsed_seconds {0.0};
     double rx_packets_per_second {0.0};
     double top_level_messages_per_second {0.0};
     double top_level_bundles_per_second {0.0};
@@ -79,19 +85,18 @@ public:
     RuntimeStats();
 
     void record_packet(size_t bytes) noexcept;
+    // msg/bundle args reserved for future per-address/per-typetag stats.
     void record_message(const MessageView& msg) noexcept;
     void record_bundle(const BundleView& bundle) noexcept;
     void record_runtime_drop(RuntimeDropReason reason) noexcept;
     void add_os_drops(OsDropDelta delta) noexcept;
 
-    RuntimeStatsSnapshot snapshot();
-    void                 reset();
+    RuntimeStatsSnapshot   snapshot() const noexcept;
+    RuntimeStatsRateSample sample_rates() noexcept;
+    void                   reset() noexcept;
 
 private:
-    using Clock     = std::chrono::steady_clock;
-    using TimePoint = Clock::time_point;
-
-    TimePoint m_last_snapshot;
+    uint64_t m_last_rate_sample_ns {0};
 
     uint64_t m_rx_packets_total {0};
     uint64_t m_rx_bytes_total {0};
@@ -102,9 +107,9 @@ private:
     RuntimeDropCounts m_runtime_drops;
     OsDropScope       m_os_drop_scope {OsDropScope::Unavailable};
 
-    uint64_t m_last_rx_packets_total {0};
-    uint64_t m_last_top_level_messages_total {0};
-    uint64_t m_last_top_level_bundles_total {0};
+    uint64_t m_last_rate_rx_packets_total {0};
+    uint64_t m_last_rate_top_level_messages_total {0};
+    uint64_t m_last_rate_top_level_bundles_total {0};
 };
 
 class OSCStatsServer
@@ -130,6 +135,7 @@ public:
 
     RuntimeStats&       stats() noexcept { return m_stats; }
     const RuntimeStats& stats() const noexcept { return m_stats; }
+    void                reset_stats() noexcept { m_stats.reset(); }
 
     bool process_one();
     int  process_all(int max = -1);
@@ -150,58 +156,8 @@ private:
     OsDropProvider*            m_os_drop_provider {nullptr};
 };
 
-class RuntimeStatsUDPTransport final : public Transport, public OsDropProvider
-{
-public:
-    RuntimeStatsUDPTransport(const std::string& host, uint16_t port);
-    explicit RuntimeStatsUDPTransport(uint16_t port);
-    RuntimeStatsUDPTransport(const RuntimeStatsUDPTransport&)            = delete;
-    RuntimeStatsUDPTransport& operator=(const RuntimeStatsUDPTransport&) = delete;
-    RuntimeStatsUDPTransport(RuntimeStatsUDPTransport&&)                 = delete;
-    RuntimeStatsUDPTransport& operator=(RuntimeStatsUDPTransport&&)      = delete;
-    ~RuntimeStatsUDPTransport() override;
-
-    bool   send(const uint8_t* data, size_t size) override;
-    size_t receive(uint8_t* buffer, size_t buffer_size) override;
-    bool   is_ready() const override { return m_connected; }
-    void   close() override;
-
-    OsDropDelta sample() noexcept override;
-    bool        os_drops_supported() const noexcept { return m_os_drop_scope != OsDropScope::Unavailable; }
-
-private:
-    bool setup_client();
-    bool setup_server();
-    void enable_per_socket_os_drops() noexcept;
-    void record_linux_rxq_overflow(uint32_t kernel_value) noexcept;
-
-    int         m_socket_fd {-1};
-    std::string m_host;
-    int         m_port {0};
-
-    bool m_is_server {false};
-    bool m_connected {false};
-
-    uint64_t    m_pending_os_drops {0};
-    uint32_t    m_last_rxq_ovfl_value {0};
-    bool        m_seen_os_drops {false};
-    OsDropScope m_os_drop_scope {OsDropScope::Unavailable};
-};
-
-class BsdHostUdpProvider final : public OsDropProvider
-{
-public:
-    BsdHostUdpProvider();
-
-    OsDropDelta sample() noexcept override;
-    bool        is_supported() const noexcept { return m_supported; }
-
-private:
-    uint32_t m_last_value {0};
-    bool     m_supported {false};
-};
-
 std::string format_runtime_stats_snapshot(const RuntimeStatsSnapshot& snapshot);
+std::string format_runtime_stats_snapshot(const RuntimeStatsSnapshot& snapshot, const RuntimeStatsRateSample& rates);
 
 } // namespace NanoOsc
 

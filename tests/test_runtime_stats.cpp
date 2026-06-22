@@ -239,17 +239,38 @@ TEST_CASE("RuntimeStats records runtime drops by reason")
     CHECK(snapshot.runtime_drops.total() == 4);
 }
 
+TEST_CASE("RuntimeStats snapshots are passive and rates are sampled explicitly")
+{
+    RuntimeStats stats;
+    stats.record_packet(64);
+
+    RuntimeStatsSnapshot first_snapshot = stats.snapshot();
+    RuntimeStatsSnapshot next_snapshot  = stats.snapshot();
+    CHECK(first_snapshot.rx_packets_total == 1);
+    CHECK(next_snapshot.rx_packets_total == 1);
+
+    RuntimeStatsRateSample first_rates = stats.sample_rates();
+    CHECK(first_rates.elapsed_seconds >= 0.0);
+    CHECK(first_rates.rx_packets_per_second >= 0.0);
+
+    RuntimeStatsRateSample next_rates = stats.sample_rates();
+    CHECK(next_rates.rx_packets_per_second == 0.0);
+    CHECK(next_rates.top_level_messages_per_second == 0.0);
+    CHECK(next_rates.top_level_bundles_per_second == 0.0);
+}
+
 TEST_CASE("RuntimeStats formats compact snapshots")
 {
     RuntimeStats stats;
     stats.add_os_drops(OsDropDelta {120, OsDropScope::HostUdp});
 
-    RuntimeStatsSnapshot snapshot          = stats.snapshot();
-    snapshot.rx_packets_per_second         = 4500.0;
-    snapshot.top_level_messages_per_second = 18000.0;
-    snapshot.top_level_bundles_per_second  = 12.0;
+    RuntimeStatsSnapshot   snapshot = stats.snapshot();
+    RuntimeStatsRateSample rates;
+    rates.rx_packets_per_second         = 4500.0;
+    rates.top_level_messages_per_second = 18000.0;
+    rates.top_level_bundles_per_second  = 12.0;
 
-    const std::string text = format_runtime_stats_snapshot(snapshot);
+    const std::string text = format_runtime_stats_snapshot(snapshot, rates);
     CHECK(text.find("rx packets/sec      4500") != std::string::npos);
     CHECK(text.find("top messages/sec    18000") != std::string::npos);
     CHECK(text.find("bundles/sec         12.0") != std::string::npos);
@@ -284,18 +305,4 @@ TEST_CASE("RuntimeStats names OS drop scopes")
     CHECK(std::string(os_drop_scope_name(OsDropScope::Unavailable)) == "unavailable");
     CHECK(std::string(os_drop_scope_name(OsDropScope::PerSocket)) == "per_socket");
     CHECK(std::string(os_drop_scope_name(OsDropScope::HostUdp)) == "host_udp");
-}
-
-TEST_CASE("BsdHostUdpProvider is safe to sample")
-{
-    BsdHostUdpProvider host_provider;
-    OsDropDelta        host_drops = host_provider.sample();
-    if (host_provider.is_supported())
-    {
-        CHECK(host_drops.scope == OsDropScope::HostUdp);
-    }
-    else
-    {
-        CHECK(host_drops.scope == OsDropScope::Unavailable);
-    }
 }

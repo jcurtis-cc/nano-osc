@@ -3,8 +3,11 @@
 
 #include "nanoosc/core.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace NanoOsc {

@@ -15,6 +15,9 @@ set(NANOOSC_TEST_SOURCES
 if(TARGET nanoosc::runtime_stats)
 	list(APPEND NANOOSC_TEST_SOURCES test_runtime_stats.cpp)
 endif()
+if(TARGET nanoosc::udp AND TARGET nanoosc::runtime_stats)
+	list(APPEND NANOOSC_TEST_SOURCES test_udp_diagnostics.cpp)
+endif()
 
 add_executable(nano-osc-tests
 	${NANOOSC_TEST_SOURCES}
@@ -25,7 +28,9 @@ target_link_libraries(nano-osc-tests
 		doctest
 )
 
-if(TARGET nanoosc::runtime_stats)
+if(TARGET nanoosc::udp)
+	target_link_libraries(nano-osc-tests PRIVATE nanoosc::udp)
+elseif(TARGET nanoosc::runtime_stats)
 	target_link_libraries(nano-osc-tests PRIVATE nanoosc::runtime_stats)
 else()
 	target_link_libraries(nano-osc-tests PRIVATE nanoosc::runtime)

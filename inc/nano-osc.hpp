@@ -3,6 +3,5 @@
 
 #include "nanoosc/core.hpp"
 #include "nanoosc/runtime.hpp"
-#include "nanoosc/udp_transport.hpp"
 
 #endif // NANO_OSC_HPP

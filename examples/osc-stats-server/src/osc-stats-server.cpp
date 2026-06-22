@@ -1,4 +1,5 @@
 #include "nanoosc/runtime_stats.hpp"
+#include "nanoosc/udp_transport.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -51,10 +52,12 @@ int main()
         const auto now = std::chrono::steady_clock::now();
         if (now >= next_report)
         {
-            std::cout << "\n" << NanoOsc::format_runtime_stats_snapshot(server.stats().snapshot()) << std::flush;
+            const NanoOsc::RuntimeStatsRateSample rates = server.stats().sample_rates();
+            std::cout << "\n" << NanoOsc::format_runtime_stats_snapshot(server.stats().snapshot(), rates) << std::flush;
             next_report = now + std::chrono::seconds(1);
         }
 
+        // Example only. Production pumps should drive process_all() from a poll/select/kqueue/epoll loop.
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 }
