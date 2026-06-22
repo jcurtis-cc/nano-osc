@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iomanip>
 #include <sstream>
+#include <string>
 #include <system_error>
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -49,9 +50,34 @@ void append_metric(std::ostringstream& out, const char* label, const std::string
     out << std::left << std::setw(20) << label << value << "\n";
 }
 
-RuntimeStatsOsDrops unavailable_os_drops() noexcept
+std::string format_runtime_drops(const RuntimeDropCounts& counts)
 {
-    return RuntimeStatsOsDrops {};
+    std::string text = std::to_string(counts.total());
+    if (counts.total() == 0)
+    {
+        return text;
+    }
+
+    text += " (";
+    bool first = true;
+    auto append = [&](const char* label, uint64_t n) {
+        if (n == 0) return;
+        if (!first) text += ", ";
+        first = false;
+        text += label;
+        text += ' ';
+        text += std::to_string(n);
+    };
+    append("decode", counts.decode_failed);
+    append("validation", counts.validation_failed);
+    append("assignment", counts.assignment_failed);
+    text += ')';
+    return text;
+}
+
+OsDropDelta unavailable_os_drops() noexcept
+{
+    return OsDropDelta {};
 }
 
 std::system_error unsupported_runtime_stats_udp()
@@ -85,15 +111,15 @@ bool read_host_udp_fullsock(uint32_t& out) noexcept
 
 } // namespace
 
-const char* runtime_stats_os_drop_scope_name(RuntimeStatsOsDropScope scope) noexcept
+const char* os_drop_scope_name(OsDropScope scope) noexcept
 {
     switch (scope)
     {
-        case RuntimeStatsOsDropScope::Unavailable:
+        case OsDropScope::Unavailable:
             return "unavailable";
-        case RuntimeStatsOsDropScope::PerSocket:
+        case OsDropScope::PerSocket:
             return "per_socket";
-        case RuntimeStatsOsDropScope::HostUdp:
+        case OsDropScope::HostUdp:
             return "host_udp";
     }
     return "unavailable";
@@ -119,44 +145,35 @@ void RuntimeStats::record_bundle(const BundleView& bundle) noexcept
     ++m_top_level_bundles_total;
 }
 
-void RuntimeStats::record_runtime_drop(RuntimeStatsDropReason reason, const uint8_t* packet, size_t size) noexcept
+void RuntimeStats::record_runtime_drop(RuntimeDropReason reason) noexcept
 {
-    (void)reason;
-    (void)packet;
-    (void)size;
-    ++m_runtime_drops_total;
+    switch (reason)
+    {
+        case RuntimeDropReason::DecodeFailed:
+            ++m_runtime_drops.decode_failed;
+            return;
+        case RuntimeDropReason::ValidationFailed:
+            ++m_runtime_drops.validation_failed;
+            return;
+        case RuntimeDropReason::AssignmentFailed:
+            ++m_runtime_drops.assignment_failed;
+            return;
+    }
 }
 
-void RuntimeStats::record_os_drops(RuntimeStatsOsDrops drops) noexcept
+void RuntimeStats::add_os_drops(OsDropDelta delta) noexcept
 {
-    if (drops.scope == RuntimeStatsOsDropScope::Unavailable)
+    if (delta.scope == OsDropScope::Unavailable)
     {
         return;
     }
 
-    if (m_os_drop_scope == RuntimeStatsOsDropScope::Unavailable || m_os_drop_scope != drops.scope)
+    if (m_os_drop_scope != delta.scope)
     {
-        m_os_drop_scope  = drops.scope;
-        m_os_drops_total = drops.total;
-        return;
-    }
-
-    m_os_drops_total = std::max(m_os_drops_total, drops.total);
-}
-
-void RuntimeStats::add_os_drops(uint64_t drops, RuntimeStatsOsDropScope scope) noexcept
-{
-    if (scope == RuntimeStatsOsDropScope::Unavailable)
-    {
-        return;
-    }
-
-    if (m_os_drop_scope == RuntimeStatsOsDropScope::Unavailable || m_os_drop_scope != scope)
-    {
-        m_os_drop_scope  = scope;
+        m_os_drop_scope  = delta.scope;
         m_os_drops_total = 0;
     }
-    m_os_drops_total += drops;
+    m_os_drops_total += delta.drops;
 }
 
 RuntimeStatsSnapshot RuntimeStats::snapshot()
@@ -169,7 +186,7 @@ RuntimeStatsSnapshot RuntimeStats::snapshot()
     out.rx_bytes_total           = m_rx_bytes_total;
     out.top_level_messages_total = m_top_level_messages_total;
     out.top_level_bundles_total  = m_top_level_bundles_total;
-    out.runtime_drops_total      = m_runtime_drops_total;
+    out.runtime_drops            = m_runtime_drops;
     out.os_drops_total           = m_os_drops_total;
     out.os_drop_scope            = m_os_drop_scope;
 
@@ -197,9 +214,9 @@ void RuntimeStats::reset()
     m_rx_bytes_total                = 0;
     m_top_level_messages_total      = 0;
     m_top_level_bundles_total       = 0;
-    m_runtime_drops_total           = 0;
     m_os_drops_total                = 0;
-    m_os_drop_scope                 = RuntimeStatsOsDropScope::Unavailable;
+    m_runtime_drops                 = RuntimeDropCounts {};
+    m_os_drop_scope                 = OsDropScope::Unavailable;
     m_last_rx_packets_total         = 0;
     m_last_top_level_messages_total = 0;
     m_last_top_level_bundles_total  = 0;
@@ -215,10 +232,9 @@ bool OSCStatsServer::process_one()
     if (received == 0) return false;
 
     m_stats.record_packet(received);
-    sample_os_drops();
 
-    auto report_drop = [&](RuntimeStatsDropReason reason) {
-        m_stats.record_runtime_drop(reason, m_buffer.data(), received);
+    auto report_drop = [&](RuntimeDropReason reason) {
+        m_stats.record_runtime_drop(reason);
         if (m_error_handler) m_error_handler(m_buffer.data(), received);
     };
 
@@ -228,12 +244,12 @@ bool OSCStatsServer::process_one()
         BundleView bv;
         if (!decode_bundle_view(bv, m_buffer.data(), received))
         {
-            report_drop(RuntimeStatsDropReason::DecodeFailed);
+            report_drop(RuntimeDropReason::DecodeFailed);
             return false;
         }
         if (!validate_bundle_view(bv))
         {
-            report_drop(RuntimeStatsDropReason::ValidationFailed);
+            report_drop(RuntimeDropReason::ValidationFailed);
             return false;
         }
         m_stats.record_bundle(bv);
@@ -245,7 +261,7 @@ bool OSCStatsServer::process_one()
         {
             if (!m_bundle.assign(bv))
             {
-                report_drop(RuntimeStatsDropReason::AssignmentFailed);
+                report_drop(RuntimeDropReason::AssignmentFailed);
                 return false;
             }
             m_bundle_handler(m_bundle);
@@ -256,12 +272,12 @@ bool OSCStatsServer::process_one()
     MessageView mv;
     if (!decode_message_view(mv, m_buffer.data(), received))
     {
-        report_drop(RuntimeStatsDropReason::DecodeFailed);
+        report_drop(RuntimeDropReason::DecodeFailed);
         return false;
     }
     if (!validate_message_view(mv))
     {
-        report_drop(RuntimeStatsDropReason::ValidationFailed);
+        report_drop(RuntimeDropReason::ValidationFailed);
         return false;
     }
     m_stats.record_message(mv);
@@ -273,7 +289,7 @@ bool OSCStatsServer::process_one()
     {
         if (!m_msg.assign(mv))
         {
-            report_drop(RuntimeStatsDropReason::AssignmentFailed);
+            report_drop(RuntimeDropReason::AssignmentFailed);
             return false;
         }
         m_msg_handler(m_msg);
@@ -296,7 +312,7 @@ void OSCStatsServer::sample_os_drops() noexcept
 {
     if (m_os_drop_provider)
     {
-        m_stats.record_os_drops(m_os_drop_provider->sample());
+        m_stats.add_os_drops(m_os_drop_provider->sample());
     }
 }
 
@@ -466,9 +482,9 @@ size_t RuntimeStatsUDPTransport::receive(uint8_t* buffer, size_t buffer_size)
     {
         if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SO_RXQ_OVFL)
         {
-            uint32_t low32 = 0;
-            std::memcpy(&low32, CMSG_DATA(cmsg), sizeof(low32));
-            record_linux_rxq_overflow(low32);
+            uint32_t kernel_value = 0;
+            std::memcpy(&kernel_value, CMSG_DATA(cmsg), sizeof(kernel_value));
+            record_linux_rxq_overflow(kernel_value);
         }
     }
 #else
@@ -499,13 +515,15 @@ void RuntimeStatsUDPTransport::close()
 #endif
 }
 
-RuntimeStatsOsDrops RuntimeStatsUDPTransport::sample() noexcept
+OsDropDelta RuntimeStatsUDPTransport::sample() noexcept
 {
-    if (m_os_drop_scope == RuntimeStatsOsDropScope::Unavailable)
+    if (m_os_drop_scope == OsDropScope::Unavailable)
     {
         return unavailable_os_drops();
     }
-    return RuntimeStatsOsDrops {m_os_drops, m_os_drop_scope};
+    OsDropDelta delta {m_pending_os_drops, m_os_drop_scope};
+    m_pending_os_drops = 0;
+    return delta;
 }
 
 void RuntimeStatsUDPTransport::enable_per_socket_os_drops() noexcept
@@ -515,34 +533,34 @@ void RuntimeStatsUDPTransport::enable_per_socket_os_drops() noexcept
     int opt = 1;
     if (setsockopt(m_socket_fd, SOL_SOCKET, SO_RXQ_OVFL, &opt, sizeof(opt)) == 0)
     {
-        m_os_drop_scope = RuntimeStatsOsDropScope::PerSocket;
+        m_os_drop_scope = OsDropScope::PerSocket;
     }
 #endif
 }
 
-void RuntimeStatsUDPTransport::record_linux_rxq_overflow(uint32_t low32) noexcept
+void RuntimeStatsUDPTransport::record_linux_rxq_overflow(uint32_t kernel_value) noexcept
 {
     if (m_seen_os_drops)
     {
-        m_os_drops += static_cast<uint32_t>(low32 - m_os_drops_low32);
+        m_pending_os_drops += static_cast<uint32_t>(kernel_value - m_last_rxq_ovfl_value);
     }
     else
     {
-        m_os_drops      = low32;
-        m_seen_os_drops = true;
+        m_pending_os_drops = kernel_value;
+        m_seen_os_drops    = true;
     }
-    m_os_drops_low32 = low32;
-    m_os_drop_scope  = RuntimeStatsOsDropScope::PerSocket;
+    m_last_rxq_ovfl_value = kernel_value;
+    m_os_drop_scope       = OsDropScope::PerSocket;
 }
 
-RuntimeStatsHostUdpDropProvider::RuntimeStatsHostUdpDropProvider()
+BsdHostUdpProvider::BsdHostUdpProvider()
 {
     uint32_t current = 0;
     m_supported      = read_host_udp_fullsock(current);
-    m_baseline       = current;
+    m_last_value     = current;
 }
 
-RuntimeStatsOsDrops RuntimeStatsHostUdpDropProvider::sample() noexcept
+OsDropDelta BsdHostUdpProvider::sample() noexcept
 {
     if (!m_supported)
     {
@@ -555,10 +573,9 @@ RuntimeStatsOsDrops RuntimeStatsHostUdpDropProvider::sample() noexcept
         return unavailable_os_drops();
     }
 
-    return RuntimeStatsOsDrops {
-        static_cast<uint32_t>(current - m_baseline),
-        RuntimeStatsOsDropScope::HostUdp,
-    };
+    const uint64_t delta = static_cast<uint32_t>(current - m_last_value);
+    m_last_value         = current;
+    return OsDropDelta {delta, OsDropScope::HostUdp};
 }
 
 std::string format_runtime_stats_snapshot(const RuntimeStatsSnapshot& snapshot)
@@ -569,11 +586,10 @@ std::string format_runtime_stats_snapshot(const RuntimeStatsSnapshot& snapshot)
     append_metric(out, "bundles/sec", format_rate(snapshot.top_level_bundles_per_second));
     out << "\n";
     append_metric(
-        out,
-        "os drops",
-        std::to_string(snapshot.os_drops_total) + " (" + runtime_stats_os_drop_scope_name(snapshot.os_drop_scope) + ")"
+        out, "os drops",
+        std::to_string(snapshot.os_drops_total) + " (" + os_drop_scope_name(snapshot.os_drop_scope) + ")"
     );
-    append_metric(out, "runtime drops", std::to_string(snapshot.runtime_drops_total));
+    append_metric(out, "runtime drops", format_runtime_drops(snapshot.runtime_drops));
     return out.str();
 }
 

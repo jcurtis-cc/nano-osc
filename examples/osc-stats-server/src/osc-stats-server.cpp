@@ -13,8 +13,8 @@ int main()
     auto  transport          = std::make_unique<NanoOsc::RuntimeStatsUDPTransport>(port);
     auto* transport_os_drops = transport.get();
 
-    NanoOsc::RuntimeStatsHostUdpDropProvider host_udp_drops;
-    NanoOsc::RuntimeStatsOsDropProvider*     os_drop_provider = nullptr;
+    NanoOsc::BsdHostUdpProvider host_udp_drops;
+    NanoOsc::OsDropProvider*    os_drop_provider = nullptr;
     if (transport_os_drops->os_drops_supported())
     {
         os_drop_provider = transport_os_drops;
