@@ -1,6 +1,6 @@
 # nano-osc
 
-A small, portable* OpenSoundControl core with optional client, server and transport abstractions.
+A small, portable* OpenSoundControl core with optional runtime, transport, and diagnostics layers.
 
 ### Goals
 
@@ -11,7 +11,7 @@ A small, portable* OpenSoundControl core with optional client, server and transp
 
 ### Architecture
 
-The library is split into a small OSC packet core and optional batteries:
+The library is split into a small OSC packet core and optional layers:
 
 * `nanoosc::core` / `#include <nanoosc/core.hpp>`
   * OSC values, messages, bundles, non-owning views, decode, validation, and encode APIs.
@@ -19,10 +19,12 @@ The library is split into a small OSC packet core and optional batteries:
 * `nanoosc::runtime` / `#include <nanoosc/runtime.hpp>`
   * Transport abstraction plus `OSCClient` and `OSCServer`.
   * Transport-agnostic and single threaded.
+* `nanoosc::runtime_stats` / `#include <nanoosc/runtime_stats.hpp>` (optional, default off)
+  * Portable stats-enabled runtime sibling with packet totals, runtime drops, OS-drop provider hooks, explicit rate sampling, and compact text snapshots.
 * `nanoosc::udp` / `#include <nanoosc/udp_transport.hpp>`
-  * POSIX UDP transport battery.
+  * POSIX UDP transport. When `nanoosc::runtime_stats` is enabled, also exposes UDP-owned drop-provider helpers for stats-enabled receive loops.
 * `nanoosc::nanoosc` / `#include <nano-osc.hpp>`
-  * Umbrella target/header for default builds.
+  * Portable umbrella target/header for core + runtime. Optional layers use explicit includes/targets.
 
 ## Supported Features
 
@@ -59,6 +61,7 @@ OpenSoundControl [Spec 1.0](https://opensoundcontrol.stanford.edu/spec-1_0.html)
 
 * [osc-client](./examples/osc-client/) with default `UDPTransport`
 * [osc-server](./examples/osc-server/) with default `UDPTransport` and simple message handler lambda.
+* [osc-stats-server](./examples/osc-stats-server/) with `OSCStatsServer` and UDP drop diagnostics, enabled by `-DNANOOSC_BUILD_RUNTIME_STATS=ON` when UDP is available.
 
 ### Building & Testing
 
@@ -70,7 +73,7 @@ ctest --test-dir build --output-on-failure
 
 Options:
 * `-DNANOOSC_BUILD_RUNTIME=OFF` builds only the OSC packet core
-* `-DNANOOSC_BUILD_UDP=OFF` skips the POSIX UDP transport battery
-* `-DBUILD_EXAMPLES=OFF` skips the client/server examples
+* `-DNANOOSC_BUILD_RUNTIME_STATS=ON` builds the optional runtime stats layer
+* `-DNANOOSC_BUILD_UDP=OFF` skips the POSIX UDP transport layer
+* `-DBUILD_EXAMPLES=OFF` skips the examples
 * `-DBUILD_TESTING=OFF` skips the unit tests
-

@@ -1,4 +1,5 @@
 #include "nano-osc.hpp"
+#include "nanoosc/udp_transport.hpp"
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -9,8 +10,8 @@ int main(int argc, char* argv[])
 {
     std::cout << "Creating OSCServer..." << std::endl;
 
-    auto               t      = std::make_unique<NanoOsc::UDPTransport>(9000);
-    NanoOsc::OSCServer server = NanoOsc::OSCServer(std::move(t));
+    auto               transport = std::make_unique<NanoOsc::UDPTransport>(9000);
+    NanoOsc::OSCServer server    = NanoOsc::OSCServer(std::move(transport));
 
     std::function<void(const NanoOsc::Message&)> msg_handler = [](const NanoOsc::Message& msg) {
         std::cout << msg.address << " tags: " << msg.tags;

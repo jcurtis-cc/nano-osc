@@ -1,4 +1,5 @@
 #include "nano-osc.hpp"
+#include "nanoosc/udp_transport.hpp"
 #include <cstdint>
 #include <iostream>
 #include <memory>
@@ -9,9 +10,9 @@ int main(int argc, char* argv[])
 {
     std::cout << "Creating OSCClient..." << std::endl;
 
-    auto               t      = std::make_unique<NanoOsc::UDPTransport>("127.0.0.1", 9000);
-    NanoOsc::OSCClient client = NanoOsc::OSCClient(std::move(t));
-    auto               msg    = NanoOsc::Message("/test");
+    auto               transport = std::make_unique<NanoOsc::UDPTransport>("127.0.0.1", 9000);
+    NanoOsc::OSCClient client    = NanoOsc::OSCClient(std::move(transport));
+    auto               msg       = NanoOsc::Message("/test");
     msg.add_int32(-1);
     msg.add_float(-0.5f);
     msg.add_string("string");
