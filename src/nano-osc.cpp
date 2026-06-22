@@ -25,8 +25,7 @@ std::vector<uint8_t> Message::encode() const
     for (const auto& arg : arguments)
     {
         std::visit(
-            [&](const auto& value)
-            {
+            [&](const auto& value) {
                 using T = std::decay_t<decltype(value)>;
                 if constexpr (std::is_same_v<T, OSCInt>)
                 {
@@ -70,7 +69,7 @@ bool try_decode_message(Message& out, const uint8_t* data, size_t size) noexcept
     using namespace detail;
     std::string addr;
     std::string tagstr;
-    size_t offset = 0;
+    size_t      offset = 0;
     if (!read_osc_string(addr, data, size, offset)) return false;
     if (!read_osc_string(tagstr, data, size, offset)) return false;
 
@@ -150,7 +149,7 @@ bool try_decode_message(Message& out, const uint8_t* data, size_t size) noexcept
     return true;
 }
 
-}  // namespace
+} // namespace
 
 Message Message::decode(const uint8_t* data, size_t size)
 {
@@ -195,7 +194,7 @@ bool try_decode_bundle(Bundle& out, const uint8_t* data, size_t size) noexcept
 {
     using namespace detail;
     if (!is_bundle(data, size)) return false;
-    size_t offset = 8;
+    size_t   offset = 8;
     uint64_t tt;
     if (!read_osc_timetag(tt, data, size, offset)) return false;
 
@@ -228,7 +227,7 @@ bool try_decode_bundle(Bundle& out, const uint8_t* data, size_t size) noexcept
     return true;
 }
 
-}  // namespace
+} // namespace
 
 Bundle Bundle::decode(const uint8_t* data, size_t size)
 {
@@ -407,4 +406,4 @@ int OSCServer::process_all(int max)
     return count;
 }
 
-}  // namespace NanoOsc
+} // namespace NanoOsc

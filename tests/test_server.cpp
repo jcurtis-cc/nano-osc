@@ -15,10 +15,7 @@ class ReplayTransport : public Transport
 public:
     ReplayTransport(int count, std::vector<uint8_t> packet) : m_remaining(count), m_packet(std::move(packet)) {}
 
-    bool send(const uint8_t*, size_t) override
-    {
-        return true;
-    }
+    bool send(const uint8_t*, size_t) override { return true; }
 
     size_t receive(uint8_t* buf, size_t buf_size) override
     {
@@ -30,26 +27,23 @@ public:
         return n;
     }
 
-    bool is_ready() const override
-    {
-        return true;
-    }
+    bool is_ready() const override { return true; }
     void close() override {}
 
 private:
-    int m_remaining;
+    int                  m_remaining;
     std::vector<uint8_t> m_packet;
 };
 
-}  // namespace
+} // namespace
 
 TEST_CASE("process_all caps at max")
 {
     Message m("/x");
     m.add_int32(1);
 
-    auto packet = m.encode();
-    auto t      = std::make_unique<ReplayTransport>(10, packet);
+    auto      packet = m.encode();
+    auto      t      = std::make_unique<ReplayTransport>(10, packet);
     OSCServer server(std::move(t));
 
     int handled = 0;
@@ -65,8 +59,8 @@ TEST_CASE("process_all drains all when max < 0")
     Message m("/x");
     m.add_int32(1);
 
-    auto packet = m.encode();
-    auto t      = std::make_unique<ReplayTransport>(5, packet);
+    auto      packet = m.encode();
+    auto      t      = std::make_unique<ReplayTransport>(5, packet);
     OSCServer server(std::move(t));
 
     int handled = 0;

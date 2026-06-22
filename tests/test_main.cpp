@@ -6,7 +6,7 @@
 TEST_CASE("harness wiring: encode/decode trivial message")
 {
     NanoOsc::Message msg("/ping");
-    auto bytes = msg.encode();
+    auto             bytes = msg.encode();
     REQUIRE(bytes.size() > 0);
 
     auto decoded = NanoOsc::Message::decode(bytes.data(), bytes.size());

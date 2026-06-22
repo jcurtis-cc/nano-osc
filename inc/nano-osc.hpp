@@ -14,8 +14,8 @@
 
 namespace NanoOsc {
 
-constexpr size_t BUFFER_MAX_SIZE        = 65536;
-constexpr std::array<char, 8> BUNDLE_ID = {'#', 'b', 'u', 'n', 'd', 'l', 'e', 0};
+constexpr size_t              BUFFER_MAX_SIZE = 65536;
+constexpr std::array<char, 8> BUNDLE_ID       = {'#', 'b', 'u', 'n', 'd', 'l', 'e', 0};
 
 using OSCInt     = int32_t;
 using OSCInt64   = int64_t;
@@ -29,14 +29,11 @@ using OSCValue   = std::variant<OSCInt, OSCInt64, OSCFloat, OSCFloat64, OSCStrin
 class Message
 {
 public:
-    std::string address;
-    std::string tags;
+    std::string           address;
+    std::string           tags;
     std::vector<OSCValue> arguments;
 
-    explicit Message(const std::string& addr) : address(addr)
-    {
-        tags.push_back(',');
-    }
+    explicit Message(const std::string& addr) : address(addr) { tags.push_back(','); }
 
     void clear()
     {
@@ -65,15 +62,15 @@ public:
     }
 
     std::vector<uint8_t> encode() const;
-    static Message decode(const uint8_t* data, size_t size);
+    static Message       decode(const uint8_t* data, size_t size);
 };
 
 class Bundle
 {
 public:
     std::vector<Message> messages;
-    std::vector<Bundle> bundles;
-    OSCTimeTag timetag {1};
+    std::vector<Bundle>  bundles;
+    OSCTimeTag           timetag {1};
 
     Bundle() = default;
 
@@ -84,18 +81,12 @@ public:
         timetag = 1;
     }
 
-    void add_message(const Message& msg)
-    {
-        messages.emplace_back(msg);
-    }
+    void add_message(const Message& msg) { messages.emplace_back(msg); }
 
-    void add_bundle(const Bundle& bundle)
-    {
-        bundles.emplace_back(bundle);
-    }
+    void add_bundle(const Bundle& bundle) { bundles.emplace_back(bundle); }
 
     std::vector<uint8_t> encode() const;
-    static Bundle decode(const uint8_t* data, size_t size);
+    static Bundle        decode(const uint8_t* data, size_t size);
 };
 
 class Transport
@@ -108,10 +99,10 @@ public:
     Transport& operator=(Transport&&)      = delete;
     virtual ~Transport()                   = default;
 
-    virtual bool send(const uint8_t* data, size_t size)         = 0;
+    virtual bool   send(const uint8_t* data, size_t size)       = 0;
     virtual size_t receive(uint8_t* buffer, size_t buffer_size) = 0;
-    virtual bool is_ready() const                               = 0;
-    virtual void close()                                        = 0;
+    virtual bool   is_ready() const                             = 0;
+    virtual void   close()                                      = 0;
 };
 
 class UDPTransport final : public Transport
@@ -136,26 +127,20 @@ public:
     UDPTransport& operator=(const UDPTransport&) = delete;
     UDPTransport(UDPTransport&&)                 = delete;
     UDPTransport& operator=(UDPTransport&&)      = delete;
-    ~UDPTransport() override
-    {
-        close();
-    }
+    ~UDPTransport() override { close(); }
 
-    bool send(const uint8_t* data, size_t size) override;
+    bool   send(const uint8_t* data, size_t size) override;
     size_t receive(uint8_t* buffer, size_t buffer_size) override;
-    bool is_ready() const override
-    {
-        return m_connected;
-    }
-    void close() override;
+    bool   is_ready() const override { return m_connected; }
+    void   close() override;
 
 private:
     bool setup_client();
     bool setup_server();
 
-    int m_socket_fd;
+    int         m_socket_fd;
     std::string m_host;
-    int m_port;
+    int         m_port;
 
     bool m_is_server;
     bool m_connected;
@@ -174,7 +159,7 @@ public:
 
 private:
     std::unique_ptr<Transport> m_transport;
-    std::vector<uint8_t> m_buffer;
+    std::vector<uint8_t>       m_buffer;
 };
 
 class OSCServer
@@ -187,26 +172,20 @@ public:
     using MessageHandler = std::function<void(const Message&)>;
     using BundleHandler  = std::function<void(const Bundle&)>;
 
-    void set_message_handler(MessageHandler handler)
-    {
-        m_msg_handler = std::move(handler);
-    }
+    void set_message_handler(MessageHandler handler) { m_msg_handler = std::move(handler); }
 
-    void set_bundle_handler(BundleHandler handler)
-    {
-        m_bundle_handler = std::move(handler);
-    }
+    void set_bundle_handler(BundleHandler handler) { m_bundle_handler = std::move(handler); }
 
     // Returns true if a packet was received and dispatched, false otherwise. Non-blocking.
     bool process_one();
     // Drains pending packets up to `max` (or all when max < 0). Returns count dispatched.
-    int process_all(int max = -1);
+    int  process_all(int max = -1);
 
 private:
     std::unique_ptr<Transport> m_transport;
-    std::vector<uint8_t> m_buffer;
-    MessageHandler m_msg_handler;
-    BundleHandler m_bundle_handler;
+    std::vector<uint8_t>       m_buffer;
+    MessageHandler             m_msg_handler;
+    BundleHandler              m_bundle_handler;
 };
 
 namespace detail {
@@ -342,7 +321,8 @@ inline bool read_osc_timetag(uint64_t& out, const uint8_t* data, size_t size, si
 inline bool read_osc_string(std::string& out, const uint8_t* data, size_t size, size_t& offset)
 {
     size_t start = offset;
-    while (offset < size && data[offset] != 0x00) ++offset;
+    while (offset < size && data[offset] != 0x00)
+        ++offset;
     if (offset >= size) return false;
     out.assign(reinterpret_cast<const char*>(data + start), offset - start);
     offset = (offset + 4) & ~size_t {0x3};
@@ -364,8 +344,8 @@ inline bool read_osc_blob(std::vector<uint8_t>& out, const uint8_t* data, size_t
     return true;
 }
 
-}  // namespace detail
+} // namespace detail
 
-}  // namespace NanoOsc
+} // namespace NanoOsc
 
-#endif  // NANO_OSC_HPP
+#endif // NANO_OSC_HPP

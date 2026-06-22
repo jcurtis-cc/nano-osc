@@ -9,17 +9,15 @@ int main(int argc, char* argv[])
 {
     std::cout << "Creating OSCServer..." << std::endl;
 
-    auto t                    = std::make_unique<NanoOsc::UDPTransport>(9000);
+    auto               t      = std::make_unique<NanoOsc::UDPTransport>(9000);
     NanoOsc::OSCServer server = NanoOsc::OSCServer(std::move(t));
 
-    std::function<void(const NanoOsc::Message&)> msg_handler = [](const NanoOsc::Message& msg)
-    {
+    std::function<void(const NanoOsc::Message&)> msg_handler = [](const NanoOsc::Message& msg) {
         std::cout << msg.address << " tags: " << msg.tags;
         for (const auto& arg : msg.arguments)
         {
             std::visit(
-                [&](const auto& value)
-                {
+                [&](const auto& value) {
                     using T = std::decay_t<decltype(value)>;
                     if constexpr (std::is_same_v<T, NanoOsc::OSCBlob>)
                     {
@@ -45,8 +43,7 @@ int main(int argc, char* argv[])
 
     server.set_message_handler(msg_handler);
 
-    std::function<void(const NanoOsc::Bundle&)> bundle_handler = [&](const NanoOsc::Bundle& bundle)
-    {
+    std::function<void(const NanoOsc::Bundle&)> bundle_handler = [&](const NanoOsc::Bundle& bundle) {
         std::cout << "#bundle timetag: " << bundle.timetag << "\n";
 
         for (const auto& msg : bundle.messages)

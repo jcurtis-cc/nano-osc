@@ -21,7 +21,7 @@ Bundle roundtrip(const Bundle& in)
     return Bundle::decode(bytes.data(), bytes.size());
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("int32 roundtrip")
 {
@@ -59,7 +59,8 @@ TEST_CASE("blob roundtrip — multiple lengths")
     for (size_t len : {size_t {0}, size_t {1}, size_t {3}, size_t {4}, size_t {5}, size_t {16}})
     {
         std::vector<uint8_t> data(len);
-        for (size_t i = 0; i < len; ++i) data[i] = static_cast<uint8_t>(i + 1);
+        for (size_t i = 0; i < len; ++i)
+            data[i] = static_cast<uint8_t>(i + 1);
 
         Message m("/b");
         m.add_blob(data.data(), data.size());
@@ -138,7 +139,7 @@ TEST_CASE("mixed-arg message")
 TEST_CASE("empty-arg message")
 {
     Message m("/ping");
-    auto r = roundtrip(m);
+    auto    r = roundtrip(m);
     CHECK(r.address == "/ping");
     CHECK(r.tags == ",");
     CHECK(r.arguments.empty());

@@ -11,7 +11,7 @@ TEST_CASE("truncated packet — fewer than 4 bytes")
 {
     for (size_t n : {size_t {0}, size_t {1}, size_t {2}, size_t {3}})
     {
-        std::vector<uint8_t> buf(n, 0x41);  // non-null bytes
+        std::vector<uint8_t> buf(n, 0x41); // non-null bytes
         CHECK_THROWS_AS(Message::decode(buf.data(), buf.size()), std::runtime_error);
     }
 }
@@ -68,21 +68,21 @@ TEST_CASE("int32 arg with no payload bytes")
 
 TEST_CASE("not a bundle — wrong magic")
 {
-    std::vector<uint8_t> buf(16, 0x00);  // 16 bytes of zeros: not "#bundle"
+    std::vector<uint8_t> buf(16, 0x00); // 16 bytes of zeros: not "#bundle"
     CHECK_THROWS_AS(Bundle::decode(buf.data(), buf.size()), std::runtime_error);
 }
 
 TEST_CASE("bundle too short for header + timetag")
 {
-    std::vector<uint8_t> buf = {'#', 'b', 'u', 'n', 'd', 'l', 'e', 0x00};  // 8 bytes — no timetag
+    std::vector<uint8_t> buf = {'#', 'b', 'u', 'n', 'd', 'l', 'e', 0x00}; // 8 bytes — no timetag
     CHECK_THROWS_AS(Bundle::decode(buf.data(), buf.size()), std::runtime_error);
 }
 
 TEST_CASE("bundle sub-packet length exceeds remaining bytes")
 {
     std::vector<uint8_t> buf = {
-        '#',  'b',  'u',  'n',  'd', 'l', 'e', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,  // timetag
-        0xFF, 0xFF, 0xFF, 0xFF,  // sub-packet length: huge
+        '#',  'b',  'u',  'n',  'd', 'l', 'e', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // timetag
+        0xFF, 0xFF, 0xFF, 0xFF, // sub-packet length: huge
     };
     CHECK_THROWS_AS(Bundle::decode(buf.data(), buf.size()), std::runtime_error);
 }
@@ -90,9 +90,9 @@ TEST_CASE("bundle sub-packet length exceeds remaining bytes")
 TEST_CASE("bundle sub-packet too small to be a message")
 {
     std::vector<uint8_t> buf = {
-        '#',  'b',  'u',  'n',  'd', 'l', 'e', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,  // timetag
-        0x00, 0x00, 0x00, 0x02,  // sub-packet length: 2
-        0x41, 0x42,              // 2 bytes — no valid address
+        '#',  'b',  'u',  'n',  'd', 'l', 'e', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // timetag
+        0x00, 0x00, 0x00, 0x02, // sub-packet length: 2
+        0x41, 0x42,             // 2 bytes — no valid address
     };
     CHECK_THROWS_AS(Bundle::decode(buf.data(), buf.size()), std::runtime_error);
 }
