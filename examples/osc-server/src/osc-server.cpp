@@ -30,6 +30,38 @@ int main(int argc, char* argv[])
                         std::cout.flags(f);
                         std::cout << " [" << value.size() << " bytes]";
                     }
+                    else if constexpr (std::is_same_v<T, NanoOsc::OSCChar>)
+                    {
+                        std::cout << " '" << value.value << "'";
+                    }
+                    else if constexpr (std::is_same_v<T, NanoOsc::OSCColor>)
+                    {
+                        std::cout << " #" << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
+                                  << static_cast<unsigned>(value.r) << static_cast<unsigned>(value.g)
+                                  << static_cast<unsigned>(value.b) << static_cast<unsigned>(value.a) << std::dec;
+                    }
+                    else if constexpr (std::is_same_v<T, NanoOsc::OSCMidi>)
+                    {
+                        std::cout << " midi(" << static_cast<unsigned>(value.port) << ","
+                                  << static_cast<unsigned>(value.status) << "," << static_cast<unsigned>(value.data1)
+                                  << "," << static_cast<unsigned>(value.data2) << ")";
+                    }
+                    else if constexpr (std::is_same_v<T, NanoOsc::OSCTrue>)
+                    {
+                        std::cout << " T";
+                    }
+                    else if constexpr (std::is_same_v<T, NanoOsc::OSCFalse>)
+                    {
+                        std::cout << " F";
+                    }
+                    else if constexpr (std::is_same_v<T, NanoOsc::OSCNil>)
+                    {
+                        std::cout << " N";
+                    }
+                    else if constexpr (std::is_same_v<T, NanoOsc::OSCImpulse>)
+                    {
+                        std::cout << " I";
+                    }
                     else
                     {
                         std::cout << " " << value;
