@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 
 using namespace NanoOsc;
@@ -76,8 +77,7 @@ TEST_CASE("blob roundtrip — multiple lengths")
 TEST_CASE("int64 roundtrip (h)")
 {
     Message m("/h");
-    m.tags.push_back('h');
-    m.arguments.emplace_back(OSCInt64 {-1234567890123LL});
+    m.add_int64(-1234567890123LL);
     auto r = roundtrip(m);
     CHECK(r.tags == ",h");
     REQUIRE(r.arguments.size() == 1);
@@ -86,10 +86,9 @@ TEST_CASE("int64 roundtrip (h)")
 
 TEST_CASE("float64 roundtrip (d) — proves B1 fix")
 {
-    Message m("/d");
-    m.tags.push_back('d');
+    Message      m("/d");
     const double v = 3.141592653589793;
-    m.arguments.emplace_back(OSCFloat64 {v});
+    m.add_double(v);
     auto r = roundtrip(m);
     CHECK(r.tags == ",d");
     REQUIRE(r.arguments.size() == 1);
@@ -101,8 +100,7 @@ TEST_CASE("float64 roundtrip (d) — proves B1 fix")
 TEST_CASE("symbol roundtrip (S)")
 {
     Message m("/S");
-    m.tags.push_back('S');
-    m.arguments.emplace_back(OSCString {"sym"});
+    m.add_symbol("sym");
     auto r = roundtrip(m);
     CHECK(r.tags == ",S");
     REQUIRE(r.arguments.size() == 1);
@@ -111,14 +109,115 @@ TEST_CASE("symbol roundtrip (S)")
 
 TEST_CASE("timetag-as-arg roundtrip (t)")
 {
-    Message m("/t");
-    m.tags.push_back('t');
+    Message          m("/t");
     const OSCTimeTag tt = 0xDEADBEEFCAFEBABEULL;
-    m.arguments.emplace_back(tt);
+    m.add_timetag(tt);
     auto r = roundtrip(m);
     CHECK(r.tags == ",t");
     REQUIRE(r.arguments.size() == 1);
     CHECK(std::get<OSCTimeTag>(r.arguments[0]) == tt);
+}
+
+TEST_CASE("char roundtrip (c)")
+{
+    Message m("/c");
+    m.add_char('Z');
+    auto bytes = m.encode();
+    // address "/c\0\0" (4) + tags ",c\0\0" (4) + payload 0x00 0x00 0x00 'Z'
+    REQUIRE(bytes.size() == 12);
+    const uint8_t expected_payload[4] = {0x00, 0x00, 0x00, 0x5A};
+    CHECK(std::memcmp(bytes.data() + 8, expected_payload, 4) == 0);
+
+    auto r = Message::decode(bytes.data(), bytes.size());
+    CHECK(r.tags == ",c");
+    REQUIRE(r.arguments.size() == 1);
+    CHECK(std::get<OSCChar>(r.arguments[0]).value == 'Z');
+}
+
+TEST_CASE("color roundtrip (r)")
+{
+    Message m("/r");
+    m.add_color(0x11, 0x22, 0x33, 0x44);
+    auto bytes = m.encode();
+    REQUIRE(bytes.size() == 12);
+    const uint8_t expected_payload[4] = {0x11, 0x22, 0x33, 0x44};
+    CHECK(std::memcmp(bytes.data() + 8, expected_payload, 4) == 0);
+
+    auto r = Message::decode(bytes.data(), bytes.size());
+    CHECK(r.tags == ",r");
+    REQUIRE(r.arguments.size() == 1);
+    const auto& c = std::get<OSCColor>(r.arguments[0]);
+    CHECK(c.r == 0x11);
+    CHECK(c.g == 0x22);
+    CHECK(c.b == 0x33);
+    CHECK(c.a == 0x44);
+}
+
+TEST_CASE("midi roundtrip (m)")
+{
+    Message m("/m");
+    m.add_midi(0x01, 0x90, 0x40, 0x7F); // port 1, note-on ch 0, key 64, velocity 127
+    auto bytes = m.encode();
+    REQUIRE(bytes.size() == 12);
+    const uint8_t expected_payload[4] = {0x01, 0x90, 0x40, 0x7F};
+    CHECK(std::memcmp(bytes.data() + 8, expected_payload, 4) == 0);
+
+    auto r = Message::decode(bytes.data(), bytes.size());
+    CHECK(r.tags == ",m");
+    REQUIRE(r.arguments.size() == 1);
+    const auto& midi = std::get<OSCMidi>(r.arguments[0]);
+    CHECK(midi.port == 0x01);
+    CHECK(midi.status == 0x90);
+    CHECK(midi.data1 == 0x40);
+    CHECK(midi.data2 == 0x7F);
+}
+
+TEST_CASE("no-payload tags roundtrip (T F N I)")
+{
+    Message m("/flags");
+    m.add_true();
+    m.add_false();
+    m.add_nil();
+    m.add_impulse();
+
+    auto bytes = m.encode();
+    // address "/flags\0\0" (8) + tags ",TFNI\0\0\0" (8) + zero payload
+    REQUIRE(bytes.size() == 16);
+
+    auto r = Message::decode(bytes.data(), bytes.size());
+    CHECK(r.tags == ",TFNI");
+    REQUIRE(r.arguments.size() == 4);
+    CHECK(std::holds_alternative<OSCTrue>(r.arguments[0]));
+    CHECK(std::holds_alternative<OSCFalse>(r.arguments[1]));
+    CHECK(std::holds_alternative<OSCNil>(r.arguments[2]));
+    CHECK(std::holds_alternative<OSCImpulse>(r.arguments[3]));
+}
+
+TEST_CASE("mixed-arg message with every new tag")
+{
+    Message m("/mix");
+    m.add_int32(7);
+    m.add_char('Q');
+    m.add_true();
+    m.add_color(1, 2, 3, 4);
+    m.add_nil();
+    m.add_midi(0, 0xB0, 7, 100);
+    m.add_false();
+    m.add_string("end");
+    m.add_impulse();
+
+    auto r = roundtrip(m);
+    CHECK(r.tags == ",icTrNmFsI");
+    REQUIRE(r.arguments.size() == r.tags.size() - 1); // regression guard for silent-drop bug
+    CHECK(std::get<OSCInt>(r.arguments[0]) == 7);
+    CHECK(std::get<OSCChar>(r.arguments[1]).value == 'Q');
+    CHECK(std::holds_alternative<OSCTrue>(r.arguments[2]));
+    CHECK(std::get<OSCColor>(r.arguments[3]).b == 3);
+    CHECK(std::holds_alternative<OSCNil>(r.arguments[4]));
+    CHECK(std::get<OSCMidi>(r.arguments[5]).status == 0xB0);
+    CHECK(std::holds_alternative<OSCFalse>(r.arguments[6]));
+    CHECK(std::get<OSCString>(r.arguments[7]) == "end");
+    CHECK(std::holds_alternative<OSCImpulse>(r.arguments[8]));
 }
 
 TEST_CASE("mixed-arg message")

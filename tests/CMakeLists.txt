@@ -8,11 +8,13 @@ add_executable(nano-osc-tests
 	test_roundtrip.cpp
 	test_malformed.cpp
 	test_server.cpp
+	test_views.cpp
+	test_zero_alloc.cpp
 )
 
 target_link_libraries(nano-osc-tests
 	PRIVATE
-		nanoosc::nanoosc
+		nanoosc::runtime
 		doctest
 )
 
